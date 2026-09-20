@@ -12,6 +12,7 @@ import type {
   CodexRateLimitResetCredit,
   CodexQuotaWindow,
   CodexUsagePayload,
+  DevinQuotaData,
   KimiQuotaRow,
   KimiUsagePayload,
   XaiBillingConfig,
@@ -42,6 +43,8 @@ import {
   CLAUDE_USAGE_WINDOW_KEYS,
   CODEX_RATE_LIMIT_RESET_CREDITS_URL,
   CODEX_USAGE_URL,
+  DEVIN_GET_USER_STATUS_URL,
+  DEVIN_REQUEST_HEADERS,
   KIMI_REQUEST_HEADERS,
   KIMI_USAGE_URL,
   XAI_BILLING_MONTHLY_URL,
@@ -55,6 +58,7 @@ import {
   XAI_OFFICIAL_API_ME_URL,
   XAI_REQUEST_HEADERS,
 } from './constants';
+import { parseDevinQuotaPayload } from './devinQuota';
 import { buildAntigravityQuotaGroups, buildKimiQuotaRows } from './builders';
 import {
   createStatusError,
@@ -104,6 +108,7 @@ export type CodexQuotaData = {
   rateLimitResetCreditsAvailableCount: number | null;
   rateLimitResetCredits: CodexRateLimitResetCredit[];
   rateLimitResetCreditsError: string | null;
+  resetCreditsEvidenceAtMs?: number | null;
 };
 
 const isCodexRateLimitInventory = (value: unknown): boolean =>
@@ -123,6 +128,7 @@ export type ClaudeQuotaData = {
   quotaInventoryObserved: boolean;
   extraUsage?: ClaudeExtraUsage | null;
   planType?: string | null;
+  rateLimited?: boolean;
 };
 
 export type AntigravityQuotaData = {
@@ -130,6 +136,7 @@ export type AntigravityQuotaData = {
   quotaInventoryObserved: boolean;
   subscription?: AntigravityQuotaSubscription | null;
   serverTimeOffsetMs: number | null;
+  rateLimited?: boolean;
 };
 
 export type KimiQuotaData = {
@@ -145,9 +152,14 @@ const hasExplicitEmptyAntigravityInventory = (payload: AntigravityQuotaSummaryPa
   return isRecord(payload.models) && Object.keys(payload.models).length === 0;
 };
 
+type AntigravityQuotaSubscriptionResult = {
+  subscription: AntigravityQuotaSubscription | null;
+  rateLimited: boolean;
+};
+
 const antigravitySubscriptionRequests = new Map<
   string,
-  Promise<AntigravityQuotaSubscription | null>
+  Promise<AntigravityQuotaSubscriptionResult>
 >();
 
 const toAntigravityQuotaSubscription = (
@@ -164,7 +176,7 @@ const toAntigravityQuotaSubscription = (
 const fetchAntigravityQuotaSubscription = (
   authIndex: string,
   requestScope?: ApiClientRequestScope
-): Promise<AntigravityQuotaSubscription | null> => {
+): Promise<AntigravityQuotaSubscriptionResult> => {
   const requestKey = requestScope
     ? `${sha256Hex(`${requestScope.apiBase.trim()}\u0000${requestScope.managementKey.trim()}`)}\u0000${authIndex}`
     : authIndex;
@@ -173,8 +185,14 @@ const fetchAntigravityQuotaSubscription = (
 
   const request = antigravitySubscriptionApi
     .get(authIndex, requestScope)
-    .then(toAntigravityQuotaSubscription)
-    .catch(() => null)
+    .then((summary): AntigravityQuotaSubscriptionResult => ({
+      subscription: toAntigravityQuotaSubscription(summary),
+      rateLimited: false,
+    }))
+    .catch((err: unknown): AntigravityQuotaSubscriptionResult => ({
+      subscription: null,
+      rateLimited: getStatusFromError(err) === 429,
+    }))
     .finally(() => {
       antigravitySubscriptionRequests.delete(requestKey);
     });
@@ -290,6 +308,9 @@ export const fetchAntigravityQuota = async (
       if (result.statusCode < 200 || result.statusCode >= 300) {
         lastError = getApiCallErrorMessage(result);
         lastStatus = result.statusCode;
+        if (result.statusCode === 429) {
+          throw createStatusError(lastError, 429);
+        }
         if (result.statusCode === 403 || result.statusCode === 404) {
           priorityStatus ??= result.statusCode;
         }
@@ -312,15 +333,20 @@ export const fetchAntigravityQuota = async (
         continue;
       }
 
+      const subscriptionResult = await subscriptionPromise;
       return {
         groups,
         quotaInventoryObserved: true,
-        subscription: await subscriptionPromise,
+        subscription: subscriptionResult.subscription,
         serverTimeOffsetMs: resolveResponseServerTimeOffsetMs(result.header),
+        ...(subscriptionResult.rateLimited ? { rateLimited: true } : {}),
       };
     } catch (err: unknown) {
-      lastError = err instanceof Error ? err.message : t('common.unknown_error');
       const status = getStatusFromError(err);
+      if (status === 429) {
+        throw err;
+      }
+      lastError = err instanceof Error ? err.message : t('common.unknown_error');
       if (status) {
         lastStatus = status;
         if (status === 403 || status === 404) {
@@ -331,11 +357,13 @@ export const fetchAntigravityQuota = async (
   }
 
   if (hadSuccess) {
+    const subscriptionResult = await subscriptionPromise;
     return {
       groups: [],
       quotaInventoryObserved,
-      subscription: await subscriptionPromise,
+      subscription: subscriptionResult.subscription,
       serverTimeOffsetMs: null,
+      ...(subscriptionResult.rateLimited ? { rateLimited: true } : {}),
     };
   }
 
@@ -427,10 +455,12 @@ const resolveCodexSpendControlInfo = (payload: CodexUsagePayload) => {
   };
 };
 
-type CodexResetCreditsData = {
+export type CodexResetCreditsData = {
   availableCount: number | null;
   credits: CodexRateLimitResetCredit[];
   error: string | null;
+  observedAtMs?: number;
+  resetCreditsEvidenceAtMs?: number | null;
 };
 
 const resolveCodexResetCreditsAvailableCount = (
@@ -442,12 +472,20 @@ const resolveCodexResetCreditsAvailableCount = (
   return usageAvailableCount;
 };
 
-const fetchCodexResetCredits = async (
-  authIndex: string,
-  accountId: string | null | undefined,
+export const fetchCodexResetCredits = async (
+  file: AuthFileItem,
   t: TFunction,
-  requestConfig?: AxiosRequestConfig
+  requestScope?: ApiClientRequestScope
 ): Promise<CodexResetCreditsData> => {
+  const rawAuthIndex = file['auth_index'] ?? file.authIndex;
+  const authIndex = normalizeAuthIndex(rawAuthIndex);
+  if (!authIndex) {
+    throw new Error(t('codex_quota.missing_auth_index'));
+  }
+
+  const accountId = resolveCodexChatgptAccountId(file);
+  const requestConfig = requestScope ? createScopedApiRequestConfig(requestScope) : undefined;
+
   try {
     const result = await apiCallApi.request(
       {
@@ -476,10 +514,13 @@ const fetchCodexResetCredits = async (
       };
     }
 
+    const observedAtMs = Date.now();
     return {
       availableCount: payload.availableCount,
       credits: payload.credits,
       error: null,
+      observedAtMs,
+      resetCreditsEvidenceAtMs: observedAtMs,
     };
   } catch (err: unknown) {
     return {
@@ -490,7 +531,7 @@ const fetchCodexResetCredits = async (
   }
 };
 
-export const fetchCodexQuota = async (
+export const fetchCodexQuotaSummary = async (
   file: AuthFileItem,
   t: TFunction,
   requestScope?: ApiClientRequestScope
@@ -528,7 +569,7 @@ export const fetchCodexQuota = async (
   const observedAtMs = Date.now();
   const windows = buildCodexQuotaWindows(payload, t, planType, observedAtMs);
   const usageResetCreditsAvailableCount = resolveCodexRateLimitResetCreditsAvailableCount(payload);
-  const resetCredits = await fetchCodexResetCredits(authIndex, accountId, t, requestConfig);
+
   return {
     planType,
     windows,
@@ -537,12 +578,37 @@ export const fetchCodexQuota = async (
     subscriptionActiveUntil: resolveCodexSubscriptionActiveUntil(payload),
     ...resolveCodexCreditsInfo(payload),
     ...resolveCodexSpendControlInfo(payload),
-    rateLimitResetCreditsAvailableCount: resolveCodexResetCreditsAvailableCount(
-      resetCredits,
-      usageResetCreditsAvailableCount
-    ),
+    rateLimitResetCreditsAvailableCount: usageResetCreditsAvailableCount,
+    rateLimitResetCredits: [],
+    rateLimitResetCreditsError: null,
+    resetCreditsEvidenceAtMs: usageResetCreditsAvailableCount !== null ? observedAtMs : null,
+  };
+};
+
+export const fetchCodexQuota = async (
+  file: AuthFileItem,
+  t: TFunction,
+  requestScope?: ApiClientRequestScope
+): Promise<CodexQuotaData> => {
+  const summary = await fetchCodexQuotaSummary(file, t, requestScope);
+  const resetCredits = await fetchCodexResetCredits(file, t, requestScope);
+
+  const hasValidResetDetail = !resetCredits.error && resetCredits.resetCreditsEvidenceAtMs != null;
+  const rateLimitResetCreditsAvailableCount = hasValidResetDetail
+    ? resolveCodexResetCreditsAvailableCount(
+        resetCredits,
+        summary.rateLimitResetCreditsAvailableCount
+      )
+    : summary.rateLimitResetCreditsAvailableCount;
+
+  return {
+    ...summary,
+    rateLimitResetCreditsAvailableCount,
     rateLimitResetCredits: resetCredits.credits,
     rateLimitResetCreditsError: resetCredits.error,
+    resetCreditsEvidenceAtMs: hasValidResetDetail
+      ? resetCredits.resetCreditsEvidenceAtMs
+      : summary.resetCreditsEvidenceAtMs,
   };
 };
 
@@ -1034,7 +1100,12 @@ export const fetchClaudeQuota = async (
   }
 
   const windows = buildClaudeQuotaWindows(payload, t);
+  const profileRateLimited =
+    (profileResult.status === 'fulfilled' && profileResult.value.statusCode === 429) ||
+    (profileResult.status === 'rejected' && getStatusFromError(profileResult.reason) === 429);
+
   const planType =
+    !profileRateLimited &&
     profileResult.status === 'fulfilled' &&
     profileResult.value.statusCode >= 200 &&
     profileResult.value.statusCode < 300
@@ -1048,6 +1119,7 @@ export const fetchClaudeQuota = async (
     quotaInventoryObserved: hasClaudeQuotaInventory(payload, windows),
     extraUsage: payload.extra_usage,
     planType,
+    ...(profileRateLimited ? { rateLimited: true } : {}),
   };
 };
 
@@ -1650,6 +1722,8 @@ export interface XaiBillingProbeResult {
   partial: boolean;
   statusCode?: number | null;
   blockingFailure?: unknown;
+  rateLimitFailure?: unknown;
+  rateLimited?: boolean;
 }
 
 export interface XaiQuotaProbeResult extends XaiBillingProbeResult {
@@ -1709,6 +1783,10 @@ const selectXaiBlockingBillingFailure = (failures: unknown[]) => {
   const blockingFailures = failures.filter(isXaiBlockingBillingFailure);
   return blockingFailures.length > 0 ? selectXaiBillingFailure(blockingFailures) : undefined;
 };
+
+const isXaiRateLimitFailure = (failure: unknown): boolean =>
+  getStatusFromError(failure) === 429 ||
+  (failure instanceof XaiProbeError && failure.envelope.statusCode === 429);
 
 const resolveXaiProbeAuthIndex = (file: AuthFileItem, t: TFunction): string => {
   const rawAuthIndex = file['auth_index'] ?? file.authIndex;
@@ -1843,6 +1921,15 @@ const requestXaiBillingProbe = async (
   const weeklyFailures = weeklyResult.status === 'rejected' ? [weeklyResult.reason] : [];
   const monthlyFailures = monthlyResult.status === 'rejected' ? [monthlyResult.reason] : [];
   const weeklyFailure = weeklyFailures[0];
+  const weeklyRateLimitFailure =
+    weeklyResult.status === 'rejected' && isXaiRateLimitFailure(weeklyResult.reason)
+      ? weeklyResult.reason
+      : null;
+  const monthlyRateLimitFailure =
+    monthlyResult.status === 'rejected' && isXaiRateLimitFailure(monthlyResult.reason)
+      ? monthlyResult.reason
+      : null;
+  const rateLimitFailure = weeklyRateLimitFailure ?? monthlyRateLimitFailure;
   const failures = weeklySummary ? [] : weeklyFailure ? [weeklyFailure] : monthlyFailures;
 
   return {
@@ -1850,6 +1937,8 @@ const requestXaiBillingProbe = async (
     weeklySummary,
     monthlySummary,
     failures,
+    rateLimitFailure,
+    rateLimited: rateLimitFailure !== null,
     summary: mergeXaiBillingSummaries(weeklySummary, monthlySummary),
     statusCode: weeklyProbe?.statusCode ?? monthlyProbe?.statusCode ?? null,
   };
@@ -1860,12 +1949,10 @@ export const probeXaiBilling = async (
   t: TFunction,
   requestConfig?: AxiosRequestConfig
 ): Promise<XaiBillingProbeResult> => {
-  const { failures, statusCode, summary, weeklySummary } = await requestXaiBillingProbe(
-    file,
-    t,
-    requestConfig
-  );
+  const { failures, rateLimitFailure, rateLimited, statusCode, summary, weeklySummary } =
+    await requestXaiBillingProbe(file, t, requestConfig);
   if (!summary) {
+    if (rateLimitFailure) throw rateLimitFailure;
     if (failures.length > 0) throw selectXaiBillingFailure(failures);
     throw new Error(t('xai_quota.empty_data'));
   }
@@ -1874,6 +1961,8 @@ export const probeXaiBilling = async (
     summary,
     failures,
     partial: weeklySummary === null,
+    ...(rateLimitFailure ? { rateLimitFailure } : {}),
+    ...(rateLimited ? { rateLimited: true } : {}),
     statusCode,
   };
 };
@@ -1883,21 +1972,30 @@ export const probeXaiQuota = async (
   t: TFunction,
   requestConfig?: AxiosRequestConfig
 ): Promise<XaiQuotaProbeResult> => {
-  const { authIndex, failures, statusCode, summary, weeklySummary } = await requestXaiBillingProbe(
-    file,
-    t,
-    requestConfig
-  );
+  const {
+    authIndex,
+    failures,
+    rateLimitFailure,
+    rateLimited,
+    statusCode,
+    summary,
+    weeklySummary,
+  } = await requestXaiBillingProbe(file, t, requestConfig);
   if (summary) {
     return {
       summary,
       failures,
       partial: weeklySummary === null,
+      ...(rateLimitFailure ? { rateLimitFailure } : {}),
+      ...(rateLimited ? { rateLimited: true } : {}),
       source: 'billing',
       statusCode,
       blockingFailure:
         weeklySummary === null ? selectXaiBlockingBillingFailure(failures) : undefined,
     };
+  }
+  if (rateLimitFailure) {
+    throw rateLimitFailure;
   }
   if (failures.length === 0) {
     throw new Error(t('xai_quota.empty_data'));
@@ -1913,6 +2011,7 @@ export const probeXaiQuota = async (
       summary: { ...emptyXaiBillingSummary(), officialApiHealth: officialApiResult.health },
       failures: [],
       partial: false,
+      rateLimited,
       source: 'official-api',
       statusCode: officialApiResult.statusCode,
     };
@@ -1930,21 +2029,74 @@ export const fetchXaiQuota = async (
     file,
     t,
     requestScope ? createScopedApiRequestConfig(requestScope) : undefined
-  ).then(({ summary, partial, failures }) => ({
-    ...summary,
-    partial,
-    diagnostics: failures.map((failure): XaiBillingDiagnostic => {
-      if (failure instanceof XaiProbeError) {
+  ).then(({ summary, partial, failures, rateLimited }) => {
+    return {
+      ...summary,
+      partial,
+      ...(rateLimited ? { rateLimited: true } : {}),
+      diagnostics: failures.map((failure): XaiBillingDiagnostic => {
+        if (failure instanceof XaiProbeError) {
+          return {
+            classification: failure.decision.classification,
+            statusCode: failure.envelope.statusCode,
+            message: failure.message,
+          };
+        }
         return {
-          classification: failure.decision.classification,
-          statusCode: failure.envelope.statusCode,
-          message: failure.message,
+          classification: 'unknown',
+          statusCode: null,
+          message: failure instanceof Error ? failure.message : String(failure),
         };
-      }
-      return {
-        classification: 'unknown',
-        statusCode: null,
-        message: failure instanceof Error ? failure.message : String(failure),
-      };
-    }),
-  }));
+      }),
+    };
+  });
+
+export const fetchDevinQuota = async (
+  file: AuthFileItem,
+  t: TFunction,
+  requestScope?: ApiClientRequestScope
+): Promise<DevinQuotaData> => {
+  const fileName = typeof file?.name === 'string' ? file.name.trim() : '';
+  const rawAuthIndex = file['auth_index'] ?? file.authIndex;
+  const authIndex = normalizeAuthIndex(rawAuthIndex);
+
+  if (!fileName || !authIndex) {
+    throw new Error(t('devin_quota.missing_identity'));
+  }
+
+  const result = await apiCallApi.request(
+    {
+      authIndex,
+      method: 'POST',
+      url: DEVIN_GET_USER_STATUS_URL,
+      header: { ...DEVIN_REQUEST_HEADERS },
+      data: JSON.stringify({
+        metadata: {
+          ideName: 'chisel',
+          ideVersion: '3000.10.21',
+          apiKey: '$TOKEN$',
+          locale: 'en',
+          os: 'darwin',
+          extensionVersion: '3000.10.21',
+          clientName: 'chisel',
+        },
+      }),
+    },
+    requestScope ? createScopedApiRequestConfig(requestScope) : undefined
+  );
+
+  if (result.statusCode < 200 || result.statusCode >= 300) {
+    throw createStatusError(getApiCallErrorMessage(result), result.statusCode);
+  }
+
+  const quotaData = parseDevinQuotaPayload(result.body ?? result.bodyText, {
+    observedAtMs: Date.now(),
+  });
+
+  if (!quotaData) {
+    throw new Error(t('devin_quota.empty_data'));
+  }
+
+  return quotaData;
+};
+

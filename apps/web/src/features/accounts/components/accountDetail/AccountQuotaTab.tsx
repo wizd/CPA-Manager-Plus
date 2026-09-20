@@ -211,6 +211,8 @@ export function AccountQuotaTab({
 
       {windowUsageError ? <div className={styles.errorBox}>{windowUsageError}</div> : null}
 
+
+
       {standardWindows.length > 0 || allWindows.length === 0 ? (
         <section className={styles.quotaSection} data-quota-window-group="standard">
           <div className={styles.quotaSectionHeading}>
@@ -286,9 +288,11 @@ export function AccountQuotaTab({
 
       {shouldShowResetRecords ? (
         <section
+          id="quota-reset-records"
           className={styles.quotaSection}
           data-account-quota-evidence="true"
           data-account-quota-reset-records="true"
+          data-account-detail-anchor="reset-records"
         >
           <div className={styles.quotaResetCard} data-quota-evidence-panel="reset">
             <div className={styles.quotaResetHeader}>

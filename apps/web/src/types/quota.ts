@@ -393,6 +393,7 @@ export interface CodexQuotaState extends CredentialScopedQuotaState {
   rateLimitResetCreditsAvailableCount?: number | null;
   rateLimitResetCredits?: CodexRateLimitResetCredit[];
   rateLimitResetCreditsError?: string | null;
+  resetCreditsEvidenceAtMs?: number | null;
   error?: string;
   errorStatus?: number;
   observedFromUsageHeaders?: boolean;
@@ -604,6 +605,7 @@ export interface XaiBillingSummary {
   officialApiHealth?: XaiOfficialApiHealth;
   partial?: boolean;
   diagnostics?: XaiBillingDiagnostic[];
+  rateLimited?: boolean;
 }
 
 export interface XaiQuotaState extends CredentialScopedQuotaState {
@@ -612,3 +614,28 @@ export interface XaiQuotaState extends CredentialScopedQuotaState {
   error?: string;
   errorStatus?: number;
 }
+
+export interface DevinQuotaWindow {
+  id: 'daily' | 'weekly';
+  label?: string;
+  remainingPercent: number | null;
+  resetAtMs: number | null;
+  periodHours: number;
+}
+
+export interface DevinQuotaData {
+  windows: DevinQuotaWindow[];
+  observedAtMs: number | null;
+  plan: string | null;
+  planStartMs: number | null;
+  planEndMs: number | null;
+}
+
+export interface DevinQuotaState
+  extends CredentialScopedQuotaState,
+    DevinQuotaData {
+  status: 'idle' | 'loading' | 'success' | 'error';
+  error?: string;
+  errorStatus?: number;
+}
+

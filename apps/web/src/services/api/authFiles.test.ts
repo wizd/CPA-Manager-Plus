@@ -4,6 +4,7 @@ const { mocks } = vi.hoisted(() => ({
   mocks: {
     get: vi.fn(),
     getRaw: vi.fn(),
+    post: vi.fn(),
     postForm: vi.fn(),
     patch: vi.fn(),
     put: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock('./client', () => ({
   apiClient: {
     get: mocks.get,
     getRaw: mocks.getRaw,
+    post: mocks.post,
     postForm: mocks.postForm,
     patch: mocks.patch,
     put: mocks.put,
@@ -33,10 +35,67 @@ import { sha256RawTextHex } from '@/utils/apiKeyHash';
 beforeEach(() => {
   mocks.get.mockReset();
   mocks.getRaw.mockReset();
+  mocks.post.mockReset();
   mocks.postForm.mockReset();
   mocks.patch.mockReset();
   mocks.put.mockReset();
   mocks.delete.mockReset();
+});
+
+describe('authFilesApi OAuth excluded model normalization', () => {
+  it.each([
+    { 'oauth-excluded-models': null },
+    { 'oauth-excluded-models': {} },
+    { items: null },
+    { items: {} },
+    {},
+    null,
+  ])('returns an empty map for %j', async (payload) => {
+    mocks.get.mockResolvedValue(payload);
+
+    await expect(authFilesApi.getOauthExcludedModels()).resolves.toEqual({});
+    expect(mocks.get).toHaveBeenCalledWith('/oauth-excluded-models');
+  });
+
+  it.each([
+    { 'oauth-excluded-models': { ' Codex ': [' model-a ', 'MODEL-A', 'model-b'] } },
+    { items: { ' Codex ': [' model-a ', 'MODEL-A', 'model-b'] } },
+    { ' Codex ': [' model-a ', 'MODEL-A', 'model-b'] },
+    { codex: ' model-a, MODEL-A\nmodel-b ' },
+  ])('preserves supported response formats and normalization for %j', async (payload) => {
+    mocks.get.mockResolvedValue(payload);
+
+    await expect(authFilesApi.getOauthExcludedModels()).resolves.toEqual({
+      codex: ['model-a', 'model-b'],
+    });
+  });
+
+  it('does not fall through an explicit null wrapper to items or provider keys', async () => {
+    mocks.get.mockResolvedValue({
+      'oauth-excluded-models': null,
+      items: { codex: ['model-a'] },
+      codex: ['model-b'],
+    });
+
+    await expect(authFilesApi.getOauthExcludedModels()).resolves.toEqual({});
+  });
+
+  it('does not fall through an explicit null items wrapper to provider keys', async () => {
+    mocks.get.mockResolvedValue({ items: null, codex: ['model-a'] });
+
+    await expect(authFilesApi.getOauthExcludedModels()).resolves.toEqual({});
+  });
+
+  it('prefers the canonical wrapper over items', async () => {
+    mocks.get.mockResolvedValue({
+      'oauth-excluded-models': { codex: ['model-a'] },
+      items: { codex: ['model-b'] },
+    });
+
+    await expect(authFilesApi.getOauthExcludedModels()).resolves.toEqual({
+      codex: ['model-a'],
+    });
+  });
 });
 
 describe('authFilesApi OAuth model alias normalization', () => {
@@ -212,6 +271,54 @@ describe('authFilesApi list normalization', () => {
       headers: { Authorization: 'Bearer old-cpa-key' },
       cpampScopedRequest: true,
     });
+  });
+
+  it('scopes credential lookups and filters full responses from older CPA builds', async () => {
+    mocks.get.mockResolvedValue({
+      files: [
+        {
+          name: 'shared.json',
+          id: 'runtime-1',
+          auth_index: 'auth-1',
+          type: 'codex',
+        },
+        {
+          name: 'shared.json',
+          id: 'runtime-2',
+          auth_index: 'auth-2',
+          type: 'codex',
+        },
+        {
+          name: 'unrelated.json',
+          id: 'runtime-3',
+          auth_index: 'auth-2',
+          type: 'codex',
+        },
+      ],
+    });
+    const requestScope = {
+      apiBase: 'http://old-cpa.local:8317',
+      managementKey: 'old-cpa-key',
+    };
+
+    const result = await authFilesApi.lookup(
+      { name: 'shared.json', authIndex: 'auth-2' },
+      requestScope
+    );
+
+    expect(mocks.get).toHaveBeenCalledWith('/auth-files', {
+      baseURL: 'http://old-cpa.local:8317/v0/management',
+      headers: { Authorization: 'Bearer old-cpa-key' },
+      cpampScopedRequest: true,
+      params: { name: 'shared.json', auth_index: 'auth-2' },
+    });
+    expect(result).toEqual([
+      expect.objectContaining({
+        name: 'shared.json',
+        id: 'runtime-2',
+        auth_index: 'auth-2',
+      }),
+    ]);
   });
 
   it('preserves same-name auth file rows when authIndex differs', async () => {
@@ -1803,5 +1910,40 @@ describe('applyAuthFileFieldsPatchToRecord', () => {
       cloak_sensitive_words: 'canonical',
       cloak_cache_user_id: 'false',
     });
+  });
+});
+
+describe('authFilesApi resetQuota', () => {
+  it('posts /reset-quota with normalized auth_index and scope', async () => {
+    mocks.post.mockResolvedValueOnce({
+      status: 'ok',
+      auth_index: 'idx-1',
+      models: ['gpt-6-astra'],
+    });
+
+    const result = await authFilesApi.resetQuota('  idx-1  ', {
+      apiBase: 'http://cpa.local:8317',
+      managementKey: 'secret',
+    });
+
+    expect(result).toEqual({
+      status: 'ok',
+      auth_index: 'idx-1',
+      models: ['gpt-6-astra'],
+    });
+    expect(mocks.post).toHaveBeenCalledWith(
+      '/reset-quota',
+      { auth_index: 'idx-1' },
+      expect.objectContaining({
+        baseURL: 'http://cpa.local:8317/v0/management',
+        cpampScopedRequest: true,
+      })
+    );
+  });
+
+  it('returns noop when auth_index is empty', async () => {
+    const result = await authFilesApi.resetQuota('   ');
+    expect(result).toEqual({ status: 'noop', auth_index: '', models: [] });
+    expect(mocks.post).not.toHaveBeenCalled();
   });
 });
