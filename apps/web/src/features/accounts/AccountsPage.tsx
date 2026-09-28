@@ -108,6 +108,7 @@ import {
   filterSuppressedAccountInspectionResults,
   findAccountRowForInspectionTarget,
   filterAccountRows,
+  formatProxyDisplay,
   getHandledAccountInspectionResultKeys,
   getPlanOptionLabel,
   getPlanOptionValue,
@@ -9393,6 +9394,7 @@ export function AccountsPage() {
             <div className={styles.accountCardList}>
               <div className={styles.accountCardHeader} data-account-list-header="true">
                 <span>{t('accounts.list_header_credential')}</span>
+                <span>{t('accounts.list_header_proxy')}</span>
                 <span>{t('accounts.list_header_plan')}</span>
                 <span>{t('accounts.list_header_availability')}</span>
                 <span>{t('accounts.list_header_recent_requests')}</span>
@@ -9476,6 +9478,46 @@ export function AccountsPage() {
                       </div>
                     </div>
                   </div>
+
+                  {(() => {
+                    const proxyDisplay = formatProxyDisplay(
+                      row.proxyUrl ?? '',
+                      accountDisplayMode === 'masked'
+                    );
+                    if (!proxyDisplay) {
+                      return (
+                        <div className={styles.accountCardProxy}>
+                          <span className={styles.accountProxyEmpty}>
+                            {t('accounts.list_proxy_system')}
+                          </span>
+                        </div>
+                      );
+                    }
+                    const proxyCopyKey = `${row.selectionKey}:proxy`;
+                    return (
+                      <div className={styles.accountCardProxy}>
+                        <button
+                          type="button"
+                          className={styles.accountProxyCopyTarget}
+                          title={proxyDisplay.full}
+                          aria-label={`${t('common.copy')} ${proxyDisplay.full}`}
+                          onClick={(event) =>
+                            void handleCopyIdentityText(event, proxyDisplay.full, proxyCopyKey)
+                          }
+                        >
+                          {proxyDisplay.scheme ? (
+                            <span className={styles.accountProxyScheme}>{proxyDisplay.scheme}</span>
+                          ) : null}
+                          <span className={styles.accountProxyHost}>{proxyDisplay.hostPort}</span>
+                        </button>
+                        {copiedIdentityKey === proxyCopyKey ? (
+                          <span className={styles.accountIdentityCopyHint}>
+                            {t('accounts.copy_feedback_copied')}
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
 
                   <div className={styles.accountCardPlan}>
                     <span

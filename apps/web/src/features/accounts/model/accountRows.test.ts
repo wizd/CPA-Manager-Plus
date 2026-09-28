@@ -12,6 +12,7 @@ import {
   buildAccountMetrics,
   buildAccountRows as buildAccountRowsBase,
   filterSuppressedAccountInspectionResults,
+  formatProxyDisplay,
   findAccountRowForInspectionTarget,
   filterAccountRows,
   getAccountInspectionResultSnapshotKey,
@@ -3552,6 +3553,52 @@ describe('accountRows', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]?.provider).toBe('meta');
     expect(rows[1]?.provider).toBe('meta');
+  });
+
+  it('reads proxy aliases onto the account row and matches them in search', () => {
+    const rows = buildAccountRows(
+      [
+        {
+          name: 'socks.json',
+          type: 'codex',
+          proxy_url: 'socks5://user:secret@127.0.0.1:1080',
+        },
+        { name: 'plain.json', type: 'codex' },
+      ],
+      emptyStores()
+    );
+
+    expect(rows[0]?.proxyUrl).toBe('socks5://user:secret@127.0.0.1:1080');
+    expect(rows[1]?.proxyUrl).toBe('');
+    expect(
+      filterAccountRows(rows, {
+        provider: 'all',
+        status: 'all',
+        plan: 'all',
+        quotaBand: 'all',
+        search: '127.0.0.1:1080',
+      }).map((row) => row.fileName)
+    ).toEqual(['socks.json']);
+  });
+
+  it('formats proxy display without exposing credentials in the cell', () => {
+    expect(formatProxyDisplay('socks5://user:secret@127.0.0.1:1080', false)).toEqual({
+      scheme: 'SOCKS5',
+      hostPort: '127.0.0.1:1080',
+      full: 'socks5://user:secret@127.0.0.1:1080',
+    });
+    expect(formatProxyDisplay('socks5://user:secret@127.0.0.1:1080', true)).toEqual({
+      scheme: 'SOCKS5',
+      hostPort: '127.0.0.1:1080',
+      full: 'socks5://user:***@127.0.0.1:1080',
+    });
+    expect(formatProxyDisplay('http://proxy.local:8080', false)).toEqual({
+      scheme: 'HTTP',
+      hostPort: 'proxy.local:8080',
+      full: 'http://proxy.local:8080',
+    });
+    expect(formatProxyDisplay('   ', true)).toBeNull();
+    expect(formatProxyDisplay('', false)).toBeNull();
   });
 });
 

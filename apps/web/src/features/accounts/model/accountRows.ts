@@ -191,6 +191,7 @@ export interface AccountRow {
   authIndex: string;
   projectId: string;
   note?: string;
+  proxyUrl?: string;
   priority: number | null;
   createdAtMs: number | null;
   updatedAtMs: number | null;
@@ -258,6 +259,43 @@ const readString = (value: unknown): string => {
   if (typeof value === 'string') return value.trim();
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   return '';
+};
+
+export interface ProxyDisplay {
+  scheme: string;
+  hostPort: string;
+  full: string;
+}
+
+const PROXY_USERINFO_PATTERN = /^([a-z][a-z0-9+.-]*:\/\/)?([^/@\s]*):([^@/\s]+)@/i;
+
+export const formatProxyDisplay = (url: string, masked: boolean): ProxyDisplay | null => {
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+
+  let scheme = '';
+  let hostPort = '';
+  try {
+    const parsed = new URL(trimmed);
+    scheme = parsed.protocol.replace(/:$/, '').toUpperCase();
+    hostPort = parsed.host;
+  } catch {
+    const schemeMatch = trimmed.match(/^([a-z][a-z0-9+.-]*):\/\//i);
+    scheme = schemeMatch?.[1]?.toUpperCase() ?? '';
+    const withoutScheme = trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+    const atIndex = withoutScheme.lastIndexOf('@');
+    hostPort = (atIndex >= 0 ? withoutScheme.slice(atIndex + 1) : withoutScheme).split(/[/?#]/)[0] ?? '';
+  }
+
+  if (!scheme && !hostPort) return null;
+
+  const full = masked
+    ? trimmed.replace(PROXY_USERINFO_PATTERN, (_match, protocol: string | undefined, user: string) =>
+        `${protocol ?? ''}${user}:***@`
+      )
+    : trimmed;
+
+  return { scheme, hostPort, full };
 };
 
 const readNumber = (value: unknown): number | null => {
@@ -526,6 +564,7 @@ export const buildAccountRows = (
       authIndex,
       projectId: readProjectId(file),
       note: readString(file.note),
+      proxyUrl: readString(file.proxy_url ?? file.proxyUrl ?? file['proxy-url']),
       priority: readNumber(file.priority),
       createdAtMs: readAuthFileCreatedAtMs(file),
       updatedAtMs,
@@ -763,6 +802,7 @@ export const filterAccountRows = (rows: AccountRow[], filters: AccountRowFilters
       row.authIndex,
       row.projectId,
       row.note,
+      row.proxyUrl,
       row.statusMessage,
       row.raw.state,
       row.raw.status,

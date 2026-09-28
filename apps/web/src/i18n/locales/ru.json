@@ -1528,6 +1528,8 @@
     "col_recent": "Недавние запросы",
     "col_actions": "Действия",
     "list_header_credential": "Учётные данные",
+    "list_header_proxy": "Прокси",
+    "list_proxy_system": "Системный прокси",
     "list_header_plan": "Тариф",
     "list_header_availability": "Доступность",
     "list_header_recent_requests": "Последние запросы",

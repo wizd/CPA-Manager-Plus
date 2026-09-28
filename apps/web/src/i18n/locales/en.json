@@ -1524,6 +1524,8 @@
     "col_recent": "Recent Requests",
     "col_actions": "Actions",
     "list_header_credential": "Credential",
+    "list_header_proxy": "Proxy",
+    "list_proxy_system": "System proxy",
     "list_header_plan": "Plan",
     "list_header_availability": "Availability",
     "list_header_recent_requests": "Recent Requests",

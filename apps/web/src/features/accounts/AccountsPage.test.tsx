@@ -9732,12 +9732,13 @@ describe('AccountsPage replacement flows', () => {
     expect(findHostButtonByText(renderer, 'accounts.view_mode_grid')).toBeDefined();
   });
 
-  it('renders the seven localized credential list headers', async () => {
+  it('renders the eight localized credential list headers', async () => {
     const renderer = await renderAccountsPage();
     const header = renderer.root.findByProps({ 'data-account-list-header': 'true' });
 
     expect(header.findAllByType('span').map((node) => readText(node))).toEqual([
       'accounts.list_header_credential',
+      'accounts.list_header_proxy',
       'accounts.list_header_plan',
       'accounts.list_header_availability',
       'accounts.list_header_recent_requests',

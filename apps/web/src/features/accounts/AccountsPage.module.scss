@@ -370,7 +370,7 @@
 .accountCardList {
   display: grid;
   gap: 8px;
-  min-width: 1240px;
+  min-width: 1400px;
   padding: 10px 12px;
 }
 
@@ -379,6 +379,7 @@
   display: grid;
   grid-template-columns:
     minmax(140px, 1.1fr)
+    minmax(150px, 0.9fr)
     76px
     96px
     minmax(124px, 0.3fr)
@@ -406,10 +407,10 @@
     line-height: 1.25;
   }
 
-  > span:nth-child(2),
   > span:nth-child(3),
   > span:nth-child(4),
-  > span:nth-child(5) {
+  > span:nth-child(5),
+  > span:nth-child(6) {
     justify-content: center;
     text-align: center;
   }
@@ -421,7 +422,8 @@
   }
 
   > span:first-child,
-  > span:nth-child(6) {
+  > span:nth-child(2),
+  > span:nth-child(7) {
     justify-content: flex-start;
     text-align: left;
   }
@@ -1092,13 +1094,14 @@
 
 @media (min-width: 1360px) {
   .accountCardList {
-    min-width: 1320px;
+    min-width: 1480px;
   }
 
   .accountCardHeader,
   .accountCard {
     grid-template-columns:
       minmax(150px, 1.1fr)
+      minmax(160px, 0.9fr)
       70px
       96px
       minmax(112px, 0.3fr)
@@ -1117,13 +1120,14 @@
 
 @media (min-width: 1680px) {
   .accountCardList {
-    min-width: 1500px;
+    min-width: 1660px;
   }
 
   .accountCardHeader,
   .accountCard {
     grid-template-columns:
       minmax(180px, 1.3fr)
+      minmax(190px, 1fr)
       80px
       96px
       minmax(124px, 0.3fr)
@@ -1172,6 +1176,7 @@
 }
 
 .accountCardIdentity,
+.accountCardProxy,
 .accountCardPlan,
 .accountCardHealth,
 .accountCardLatestRequest,
@@ -1218,6 +1223,76 @@
   min-width: 0;
   flex: 1;
   gap: 3px;
+}
+
+.accountCardProxy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.accountProxyCopyTarget {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  appearance: none;
+  background: transparent;
+  cursor: copy;
+  font: inherit;
+  text-align: left;
+
+  &:hover {
+    .accountProxyHost {
+      color: var(--primary-color);
+    }
+  }
+
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--primary-color) 42%, transparent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
+
+.accountProxyScheme {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-color) 10%, var(--bg-primary));
+  color: var(--primary-color);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+
+.accountProxyHost {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: $font-mono;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountProxyEmpty {
+  color: var(--accounts-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
 }
 
 .accountCardPlan {
@@ -6513,6 +6588,7 @@
   }
 
   .accountCardIdentity,
+  .accountCardProxy,
   .accountCardHealth,
   .accountCardLatestRequest,
   .accountCardEvidence,
@@ -6533,6 +6609,7 @@
     padding-top: 8px;
   }
 
+  .accountCardProxy,
   .accountCardHealth,
   .accountCardLatestRequest,
   .accountCardEvidence,
@@ -6644,6 +6721,7 @@
     font-size: 11px;
   }
 
+  .accountCardProxy,
   .accountCardHealth,
   .accountCardLatestRequest,
   .accountCardEvidence,

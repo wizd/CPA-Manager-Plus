@@ -1522,6 +1522,8 @@
     "col_recent": "最近请求",
     "col_actions": "操作",
     "list_header_credential": "凭证",
+    "list_header_proxy": "代理",
+    "list_proxy_system": "系统代理",
     "list_header_plan": "套餐",
     "list_header_availability": "可用状态",
     "list_header_recent_requests": "最近请求",

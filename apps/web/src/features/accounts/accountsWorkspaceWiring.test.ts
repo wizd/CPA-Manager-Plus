@@ -159,6 +159,7 @@ describe('accounts workspace wiring', () => {
       en,
       [
         'Credential',
+        'Proxy',
         'Plan',
         'Availability',
         'Recent Requests',
@@ -170,6 +171,7 @@ describe('accounts workspace wiring', () => {
       ru,
       [
         'Учётные данные',
+        'Прокси',
         'Тариф',
         'Доступность',
         'Последние запросы',
@@ -177,11 +179,12 @@ describe('accounts workspace wiring', () => {
         'Действия',
       ],
     ],
-    [zhCN, ['凭证', '套餐', '可用状态', '最近请求', '额度', '操作']],
-    [zhTW, ['憑證', '方案', '可用狀態', '最近請求', '額度', '操作']],
-  ])('localizes the six credential list headers', (locale, expectedHeaders) => {
+    [zhCN, ['凭证', '代理', '套餐', '可用状态', '最近请求', '额度', '操作']],
+    [zhTW, ['憑證', '代理', '方案', '可用狀態', '最近請求', '額度', '操作']],
+  ])('localizes the seven credential list headers', (locale, expectedHeaders) => {
     expect([
       locale.accounts.list_header_credential,
+      locale.accounts.list_header_proxy,
       locale.accounts.list_header_plan,
       locale.accounts.list_header_availability,
       locale.accounts.list_header_recent_requests,
